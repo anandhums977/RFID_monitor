@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RFID MQTT Subscriber</title>
+ 
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #4ec9b0;
+            margin-bottom: 10px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .connected {
+            background: #1e4620;
+            color: #4ec9b0;
+        }
+        .disconnected {
+            background: #4b1818;
+            color: #f48771;
+        }
+        .log-container {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 5px;
+            padding: 15px;
+            max-height: 500px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .log-entry {
+            padding: 8px;
+            margin: 5px 0;
+            border-left: 3px solid #4ec9b0;
+            background: #2d2d30;
+            border-radius: 3px;
+        }
+        .log-entry.gate-a {
+            border-left-color: #569cd6;
+        }
+        .log-entry.gate-b {
+            border-left-color: #c586c0;
+        }
+        .timestamp {
+            color: #858585;
+            font-size: 0.9em;
+        }
+        .gate {
+            color: #4ec9b0;
+            font-weight: bold;
+        }
+        .tag-id {
+            color: #ce9178;
+        }
+        .antenna {
+            color: #dcdcaa;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #1177bb;
+        }
+        button:disabled {
+            background: #3e3e42;
+            cursor: not-allowed;
+        }
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .stat-box {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            padding: 15px;
+            border-radius: 5px;
+            flex: 1;
+        }
+        .stat-label {
+            color: #858585;
+            font-size: 0.9em;
+        }
+        .stat-value {
+            color: #4ec9b0;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏷️ RFID MQTT Subscriber</h1>
+        <div id="status" class="status disconnected">⚠️ Disconnected</div>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-label">Total Reads</div>
+                <div class="stat-value" id="totalReads">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Gate A</div>
+                <div class="stat-value" id="gateAReads">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Gate B</div>
+                <div class="stat-value" id="gateBReads">0</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button onclick="clearLogs()">Clear Logs</button>
+        </div>
+
+        <div class="log-container" id="logContainer">
+            <div style="color: #858585; text-align: center;">Waiting for connection...</div>
+        </div>
+    </div>
+
+ <script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+
+  let totalReads = 0;
+  let gateAReads = 0;
+  let gateBReads = 0;
+
+  function updateStatus(connected) {
+    const statusDiv = document.getElementById('status');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+
+    if (connected) {
+      statusDiv.className = 'status connected';
+      statusDiv.textContent = '✓ Connected to server';
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = false;
+    } else {
+      statusDiv.className = 'status disconnected';
+      statusDiv.textContent = '⚠️ Disconnected';
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+    }
+  }
+
+  function addLog(tagData) {
+    const logContainer = document.getElementById('logContainer');
+    if (logContainer.children.length === 1 &&
+        logContainer.children[0].textContent.includes('Waiting')) {
+      logContainer.innerHTML = '';
+    }
+
+    const logEntry = document.createElement('div');
+    const gateClass = tagData.gate === 'GATE_A' ? 'gate-a' :
+                      (tagData.gate === 'GATE_B' ? 'gate-b' : '');
+    logEntry.className = 'log-entry ' + gateClass;
+    logEntry.innerHTML = `
+      <span class="timestamp">[${tagData.datetime}]</span>
+      <span class="gate">[${tagData.gate}]</span>
+      Tag: <span class="tag-id">${tagData.tagId}</span> |
+      Antenna: <span class="antenna">${tagData.antenna}</span>
+    `;
+    logContainer.insertBefore(logEntry, logContainer.firstChild);
+
+    while (logContainer.children.length > 100) {
+      logContainer.removeChild(logContainer.lastChild);
+    }
+  }
+
+  function updateStats() {
+    document.getElementById('totalReads').textContent = totalReads;
+    document.getElementById('gateAReads').textContent = gateAReads;
+    document.getElementById('gateBReads').textContent = gateBReads;
+  }
+
+  function clearLogs() {
+    document.getElementById('logContainer').innerHTML =
+      '<div style="color: #858585; text-align: center;">Logs cleared</div>';
+  }
+
+  // Socket.IO events
+  socket.on('connect', () => updateStatus(true));
+  socket.on('disconnect', () => updateStatus(false));
+
+  socket.on('mqttStatus', (status) => updateStatus(status.connected));
+
+  socket.on('history', (history) => {
+    history.forEach(tagData => {
+      totalReads++;
+      if (tagData.gate === 'GATE_A') gateAReads++;
+      if (tagData.gate === 'GATE_B') gateBReads++;
+      addLog(tagData);
+    });
+    updateStats();
+  });
+
+  socket.on('tagRead', (tagData) => {
+    totalReads++;
+    if (tagData.gate === 'GATE_A') gateAReads++;
+    if (tagData.gate === 'GATE_B') gateBReads++;
+    addLog(tagData);
+    updateStats();
+  });
+
+  // Manual connect/disconnect buttons
+  function connect() { socket.connect(); }
+  function disconnect() { socket.disconnect(); }
+</script>
+
+</body>
+</html>
